@@ -61,7 +61,11 @@ NS_ASSUME_NONNULL_BEGIN
     [_presentingViewController presentViewController:safariVC animated:YES completion:nil];
     return YES;
   }
+#ifndef OID_APP_EXTENSIONS
   BOOL openedSafari = [[UIApplication sharedApplication] openURL:URL];
+#else
+  BOOL openedSafari = NO;
+#endif
   if (!openedSafari) {
     [self cleanUp];
     NSError *safariError = [OIDErrorUtilities errorWithCode:OIDErrorCodeSafariOpenError
