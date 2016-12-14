@@ -36,15 +36,27 @@ tasks like performing an action with fresh tokens.
     'GCC_TREAT_WARNINGS_AS_ERRORS' => 'YES',
   }
 
-  s.source_files = "Source/*.{h,m}"
   s.requires_arc = true
 
+  s.default_subspec = "Core"
+
+  s.subspec "Core" do |core|
+    core.source_files = "Source/*.{h,m}"
+    core.ios.source_files = "Source/iOS/**/*.{h,m}"
+    core.osx.source_files = "Source/macOS/**/*.{h,m}"
+  end
+
+  s.subspec "AppExtension" do |ext|
+    ext.source_files = "Source/*.{h,m}"
+    ext.ios.source_files = "Source/iOS/**/*.{h,m}"
+    ext.osx.source_files = "Source/macOS/**/*.{h,m}"
+    ext.pod_target_xcconfig = { "GCC_PREPROCESSOR_DEFINITIONS" => "OID_APP_EXTENSIONS=1" }
+  end
+
   # iOS
-  s.ios.source_files      = "Source/iOS/**/*.{h,m}"
   s.ios.deployment_target = "7.0"
   s.ios.framework         = "SafariServices"
 
   # macOS
-  s.osx.source_files = "Source/macOS/**/*.{h,m}"
   s.osx.deployment_target = '10.8'
 end
