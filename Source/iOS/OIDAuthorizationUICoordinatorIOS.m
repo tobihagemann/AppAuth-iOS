@@ -20,6 +20,7 @@
 
 #import <SafariServices/SafariServices.h>
 
+#import "OIDAuthorizationRequest.h"
 #import "OIDAuthorizationService.h"
 #import "OIDErrorUtilities.h"
 
@@ -44,7 +45,11 @@ static id<OIDSafariViewControllerFactory> __nullable gSafariViewControllerFactor
 
   BOOL _authorizationFlowInProgress;
   __weak id<OIDAuthorizationFlowSession> _session;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wpartial-availability"
   __weak SFSafariViewController *_safariVC;
+  SFAuthenticationSession *_authenticationVC;
+#pragma clang diagnostic pop
 }
 
 /** @brief Obtains the current @c OIDSafariViewControllerFactory; creating a new default instance if
@@ -71,7 +76,8 @@ static id<OIDSafariViewControllerFactory> __nullable gSafariViewControllerFactor
   return self;
 }
 
-- (BOOL)presentAuthorizationWithURL:(NSURL *)URL session:(id<OIDAuthorizationFlowSession>)session {
+- (BOOL)presentAuthorizationRequest:(OIDAuthorizationRequest *)request
+                            session:(id<OIDAuthorizationFlowSession>)session {
   if (_authorizationFlowInProgress) {
     // TODO: Handle errors as authorization is already in progress.
     return NO;
@@ -79,19 +85,42 @@ static id<OIDSafariViewControllerFactory> __nullable gSafariViewControllerFactor
 
   _authorizationFlowInProgress = YES;
   _session = session;
-  if ([SFSafariViewController class]) {
-    SFSafariViewController *safariVC =
-        [[[self class] safariViewControllerFactory] safariViewControllerWithURL:URL];
-    safariVC.delegate = self;
-    _safariVC = safariVC;
-    [_presentingViewController presentViewController:safariVC animated:YES completion:nil];
-    return YES;
-  }
-#ifndef OID_APP_EXTENSIONS
-  BOOL openedSafari = [[UIApplication sharedApplication] openURL:URL];
-#else
   BOOL openedSafari = NO;
+  NSURL *requestURL = [request authorizationRequestURL];
+
+  if (@available(iOS 11.0, *)) {
+    NSString *redirectScheme = request.redirectURL.scheme;
+    SFAuthenticationSession* authenticationVC =
+        [[SFAuthenticationSession alloc] initWithURL:requestURL
+                                   callbackURLScheme:redirectScheme
+                                   completionHandler:^(NSURL * _Nullable callbackURL,
+                                                       NSError * _Nullable error) {
+      _authenticationVC = nil;
+      if (callbackURL) {
+        [_session resumeAuthorizationFlowWithURL:callbackURL];
+      } else {
+        NSError *safariError =
+            [OIDErrorUtilities errorWithCode:OIDErrorCodeUserCanceledAuthorizationFlow
+                             underlyingError:error
+                                 description:nil];
+        [_session failAuthorizationFlowWithError:safariError];
+      }
+    }];
+    _authenticationVC = authenticationVC;
+    openedSafari = [authenticationVC start];
+  } else if (@available(iOS 9.0, *)) {
+      SFSafariViewController *safariVC =
+          [[[self class] safariViewControllerFactory] safariViewControllerWithURL:requestURL];
+      safariVC.delegate = self;
+      _safariVC = safariVC;
+      [_presentingViewController presentViewController:safariVC animated:YES completion:nil];
+      openedSafari = YES;
+  } else {
+#ifndef OID_APP_EXTENSIONS
+    openedSafari = [[UIApplication sharedApplication] openURL:requestURL];
 #endif
+  }
+
   if (!openedSafari) {
     [self cleanUp];
     NSError *safariError = [OIDErrorUtilities errorWithCode:OIDErrorCodeSafariOpenError
@@ -107,10 +136,24 @@ static id<OIDSafariViewControllerFactory> __nullable gSafariViewControllerFactor
     // Ignore this call if there is no authorization flow in progress.
     return;
   }
+  
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wpartial-availability"
   SFSafariViewController *safariVC = _safariVC;
+  SFAuthenticationSession *authenticationVC = _authenticationVC;
+#pragma clang diagnostic pop
+  
   [self cleanUp];
-  if (safariVC) {
-    [safariVC dismissViewControllerAnimated:YES completion:completion];
+  
+  if (@available(iOS 11.0, *)) {
+    [authenticationVC cancel];
+    if (completion) completion();
+  } else if (@available(iOS 9.0, *)) {
+    if (safariVC) {
+      [safariVC dismissViewControllerAnimated:YES completion:completion];
+    } else {
+      if (completion) completion();
+    }
   } else {
     if (completion) completion();
   }
@@ -120,13 +163,14 @@ static id<OIDSafariViewControllerFactory> __nullable gSafariViewControllerFactor
   // The weak references to |_safariVC| and |_session| are set to nil to avoid accidentally using
   // them while not in an authorization flow.
   _safariVC = nil;
+  _authenticationVC = nil;
   _session = nil;
   _authorizationFlowInProgress = NO;
 }
 
 #pragma mark - SFSafariViewControllerDelegate
 
-- (void)safariViewControllerDidFinish:(SFSafariViewController *)controller {
+- (void)safariViewControllerDidFinish:(SFSafariViewController *)controller NS_AVAILABLE_IOS(9.0) {
   if (controller != _safariVC) {
     // Ignore this call if the safari view controller do not match.
     return;
@@ -147,7 +191,7 @@ static id<OIDSafariViewControllerFactory> __nullable gSafariViewControllerFactor
 
 @implementation OIDDefaultSafariViewControllerFactory
 
-- (SFSafariViewController *)safariViewControllerWithURL:(NSURL *)URL {
+- (SFSafariViewController *)safariViewControllerWithURL:(NSURL *)URL NS_AVAILABLE_IOS(9.0) {
   SFSafariViewController *safariViewController =
       [[SFSafariViewController alloc] initWithURL:URL entersReaderIfAvailable:NO];
   return safariViewController;
