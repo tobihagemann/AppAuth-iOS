@@ -20,6 +20,11 @@
 
 #import "Source/OIDURLQueryComponent.h"
 
+// Ignore warnings about "Use of GNU statement expression extension" which is raised by our use of
+// the XCTAssert___ macros.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wgnu"
+
 /*! @brief A testing parameter name.
  */
 static NSString *const kTestParameterName = @"ParameterName";
@@ -72,21 +77,103 @@ static NSString *const kTestURLRoot = @"https://www.example.com/";
   OIDURLQueryComponent *query = [[OIDURLQueryComponent alloc] init];
   [query addParameter:kTestParameterName value:kTestParameterValue];
   XCTAssertEqualObjects([query valuesForParameter:kTestParameterName].firstObject,
-                        kTestParameterValue);
+                        kTestParameterValue, @"");
+}
+
+/*! @brief Test that URI query items are decoded correctly, using application/x-www-form-urlencoded
+        encoding.
+    @see https://tools.ietf.org/html/rfc6749#section-4.1.2
+    @see https://tools.ietf.org/html/rfc6749#appendix-B
+ */
+- (void)test_formurlencoded_decoding {
+  // Authorization response URL template
+  NSString *responseURLtemplate = @"com.example.apps.1234-tepulg5joaks7:/?state=z634l182&code=4/WQA"
+      "stm4iiN_0Qi-n4mEo-jL-85CvQ&scope=%@&authuser=0&session_state=ab78c20&prompt=consent#";
+
+  NSString *expectedDecodedScope =
+    @"https://www.example.com/auth/plus.me https://www.example.com/auth/userinfo.profile";
+  
+  // Tests an encoded scope with a '+'-encoded space
+  {
+    NSString* encodedScope =
+        @"https://www.example.com/auth/plus.me+https://www.example.com/auth/userinfo.profile";
+    NSString *authorizationResponse = [NSString stringWithFormat:responseURLtemplate,encodedScope];
+    OIDURLQueryComponent *query =
+        [[OIDURLQueryComponent alloc] initWithURL:[NSURL URLWithString:authorizationResponse]];
+     NSString* value = [query valuesForParameter:@"scope"][0];
+      XCTAssertEqualObjects(value,
+                            expectedDecodedScope,
+                            @"Failed to decode scope with '+' delimiter");
+  }
+  // Tests an encoded scope with a '%20'-encoded space
+  {
+    NSString* encodedScope =
+      @"https://www.example.com/auth/plus.me%20https://www.example.com/auth/userinfo.profile";
+    NSString *authorizationResponse = [NSString stringWithFormat:responseURLtemplate,encodedScope];
+    OIDURLQueryComponent *query =
+        [[OIDURLQueryComponent alloc] initWithURL:[NSURL URLWithString:authorizationResponse]];
+    NSString* value = [query valuesForParameter:@"scope"][0];
+    XCTAssertEqualObjects(value,
+                          expectedDecodedScope,
+                          @"Failed to decode scope with '%%20' delimiter");
+  }
+  // Tests that the example string from RFC6749 Appendix B is decoded correctly
+  {
+    NSString* encodedScope = @"+%25%26%2B%C2%A3%E2%82%AC";
+    NSString *authorizationResponse = [NSString stringWithFormat:responseURLtemplate,encodedScope];
+    OIDURLQueryComponent *query =
+        [[OIDURLQueryComponent alloc] initWithURL:[NSURL URLWithString:authorizationResponse]];
+    NSString* value = [query valuesForParameter:@"scope"][0];
+    XCTAssertEqualObjects(value,
+                          @" %&+£€",
+                          @"Failed to decode RFC6749 Appendix B sample string correctly.");
+  }
+}
+
+/*! @brief Test that URI query items are encoded correctly, using application/x-www-form-urlencoded
+        encoding. Note that AppAuth always encodes "+" as "%20" (as permitted) to reduce
+        ambiguity.
+    @see https://tools.ietf.org/html/rfc6749#section-4.1.3
+    @see https://tools.ietf.org/html/rfc6749#appendix-B
+ */
+- (void)test_formurlencoded_encoding {
+  NSURL *baseURL = [NSURL URLWithString:kTestURLRoot];
+  // Tests that space is encoded as %20
+  {
+    OIDURLQueryComponent *query = [[OIDURLQueryComponent alloc] initWithURL:baseURL];
+    [query addParameter:@"scope" value:@"openid profile"];
+    NSString *encodedParams = [query URLEncodedParameters];
+    NSString *expected = @"scope=openid%20profile";
+    XCTAssertEqualObjects(encodedParams,
+                          expected,
+                          @"Failed to encode space as %%20.");
+  }
+  // Tests that the example string from RFC6749 Appendix B is encoded correctly (but with space
+  // encoded as %20, not +, as allowed by application/x-www-form-urlencoded.
+  {
+      OIDURLQueryComponent *query = [[OIDURLQueryComponent alloc] initWithURL:baseURL];
+      [query addParameter:@"scope" value:@" %&+£€"];
+      // Tests the URLEncodedParameters method
+      NSString *encodedParams = [query URLEncodedParameters];
+      NSString *expected = @"scope=%20%25%26%2B%C2%A3%E2%82%AC";
+      XCTAssertEqualObjects(encodedParams,
+                            expected,
+                            @"Failed to encode RFC6749 Appendix B sample string correctly.");
+  }
 }
 
 - (void)testAddingTwoParameters {
   OIDURLQueryComponent *query = [[OIDURLQueryComponent alloc] init];
   [query addParameter:kTestParameterName value:kTestParameterValue];
   XCTAssertEqualObjects([query valuesForParameter:kTestParameterName].firstObject,
-                        kTestParameterValue);
+                        kTestParameterValue, @"");
 
   [query addParameter:kTestParameterName value:kTestParameterValue2];
   NSArray<NSString *> *values = [query valuesForParameter:kTestParameterName];
-  XCTAssertNotNil(values);
-  XCTAssertEqual(values.count, 2);
-  XCTAssertEqualObjects(values.firstObject, kTestParameterValue);
-  XCTAssertEqualObjects(values[1], kTestParameterValue2);
+  XCTAssertNotNil(values, @"");
+  XCTAssertEqual(values.count, 2, @"");
+  XCTAssertEqualObjects(values.firstObject, kTestParameterValue, @"");
+  XCTAssertEqualObjects(values[1], kTestParameterValue2, @"");
 }
 
 /* @brief Tests the application/x-www-form-urlencoded encoding.
@@ -100,34 +187,34 @@ static NSString *const kTestURLRoot = @"https://www.example.com/";
   // Tests the URLEncodedParameters method
   NSString *encodedParams = [query URLEncodedParameters];
   NSString *expected = [NSString stringWithFormat:@"%@=%@", kTestParameterName, kEncodingTestEncoded];
-  XCTAssertEqualObjects(encodedParams, expected);
+  XCTAssertEqualObjects(encodedParams, expected, @"");
 
   // Tests that params are correctly encoded when using URLByReplacingQueryInURL
   NSURL *url = [query URLByReplacingQueryInURL:baseURL];
   NSString* expectedURL = [NSString stringWithFormat:@"%@?%@", kTestURLRoot, expected];
-  XCTAssertEqualObjects([url absoluteString], expectedURL);
+  XCTAssertEqualObjects([url absoluteString], expectedURL, @"");
 }
 
 - (void)testAddingThreeParameters {
   OIDURLQueryComponent *query = [[OIDURLQueryComponent alloc] init];
   [query addParameter:kTestParameterName value:kTestParameterValue];
   XCTAssertEqualObjects([query valuesForParameter:kTestParameterName].firstObject,
-                        kTestParameterValue);
+                        kTestParameterValue, @"");
 
   [query addParameter:kTestParameterName value:kTestParameterValue2];
   [query addParameter:kTestParameterName value:kTestParameterValue];
   NSArray<NSString *> *values = [query valuesForParameter:kTestParameterName];
-  XCTAssertNotNil(values);
-  XCTAssertEqual(values.count, 3);
-  XCTAssertEqualObjects(values.firstObject, kTestParameterValue);
-  XCTAssertEqualObjects(values[1], kTestParameterValue2);
-  XCTAssertEqualObjects(values[2], kTestParameterValue);
+  XCTAssertNotNil(values, @"");
+  XCTAssertEqual(values.count, 3, @"");
+  XCTAssertEqualObjects(values.firstObject, kTestParameterValue, @"");
+  XCTAssertEqualObjects(values[1], kTestParameterValue2, @"");
+  XCTAssertEqualObjects(values[2], kTestParameterValue, @"");
 
   NSDictionary<NSString *, NSObject<NSCopying> *> *parametersAsDictionary = @{
     kTestParameterName : @[ kTestParameterValue, kTestParameterValue2, kTestParameterValue ]
   };
 
-  XCTAssertEqualObjects(query.dictionaryValue, parametersAsDictionary);
+  XCTAssertEqualObjects(query.dictionaryValue, parametersAsDictionary, @"");
 }
 
 - (void)testBuildingParameterStringWithSimpleParameters {
@@ -143,12 +230,13 @@ static NSString *const kTestURLRoot = @"https://www.example.com/";
   NSURL *rootURLWithParameters = [query URLByReplacingQueryInURL:rootURL];
 
   XCTAssert([rootURLWithParameters.query isEqualToString:kTestSimpleParameterStringEncoded]
-            || [rootURLWithParameters.query isEqualToString:kTestSimpleParameterStringEncodedRev]);
+            || [rootURLWithParameters.query isEqualToString:kTestSimpleParameterStringEncodedRev],
+            @"");
 
   OIDURLQueryComponent *parsedParameters =
       [[OIDURLQueryComponent alloc] initWithURL:rootURLWithParameters];
 
-  XCTAssertEqualObjects(parsedParameters.dictionaryValue, parameters);
+  XCTAssertEqualObjects(parsedParameters.dictionaryValue, parameters, @"");
 }
 
 - (void)testParsingQueryString {
@@ -163,7 +251,9 @@ static NSString *const kTestURLRoot = @"https://www.example.com/";
         kTestParameterName2 : kTestParameterValue2
       };
 
-  XCTAssertEqualObjects(query.dictionaryValue, parameters);
+  XCTAssertEqualObjects(query.dictionaryValue, parameters, @"");
 }
 
 @end
+
+#pragma GCC diagnostic pop
